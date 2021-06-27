@@ -8,6 +8,11 @@ from settings import app_cfg
 
 # print(json.dumps(results.json(), indent=4, sort_keys=True))
 
+# How to attach lambda to a VPC
+# https://www.youtube.com/watch?v=yMzb48BL7qQ&ab_channel=MartyAWSMartyAWS
+#
+
+
 #
 # Which a Course / Group to find
 #
