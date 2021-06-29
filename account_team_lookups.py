@@ -48,13 +48,14 @@ col_names = ['orig_email',
              'lookup_status',
              'ATD_filename']
 df_status = pd.DataFrame(columns=col_names)
-df_status.to_excel(os.path.join(my_sheet_dir, app_cfg['ATD_LOOKUP_STATUS']), index=False)
+df_status.to_excel(os.path.join(my_sheet_dir, app_cfg['REGISTRATION_ANALYSIS']), index=False)
 
 #
 # Loop over the registration data
 #
 total_registered = df_registrations['Email Address'].count()
 internal_attendees = 0
+non_corp_email_attendee = 0
 already_found = 0
 domain_dict = {}
 search_list = []
@@ -67,10 +68,21 @@ for index, value in df_registrations.iterrows():
     # Grab the email and company name
     email_address = value['Email Address']
     company_name = value['Company Name']
+
+    # Cut the email in half
+    split_email = email_address.split('@')
+    user_name = split_email[0]
+    domain_name = split_email[1]
+
+    # Get the SLD and TLD
+    domain_list = domain_name.split('.', 1)
+    sld = domain_list[0]
+    tld = domain_list[1]
+
     try:
         # Is the Company Name a NaN ?
         math.isnan(company_name)
-        company_name = "None Specified"
+        company_name = sld
     except:
         pass
 
@@ -80,26 +92,26 @@ for index, value in df_registrations.iterrows():
     scrubbed_name = (scrubbed_name.replace('\'', '')).strip()  # Replace Apostrophe with nulls
     first_word = (scrubbed_name.split()[0]).strip()  # Get the first word of the name
 
-    # Cut the email in half
-    split_email = email_address.split('@')
-    user_name = split_email[0]
-    domain_name = split_email[1]
-
     # Check to see if we have already found this company name
     ATD_filename = 'ATDData_' + scrubbed_name + '.csv'
     if os.path.join(ATD_Repo, ATD_filename) in ATD_file_pathnames :
         lookup_status = 'Already FOUND'
         already_found += 1
+    else:
+        ATD_filename = ''
 
     # if company_name has cisco skip it
     if 'cisco' in company_name.lower() or domain_name == 'cisco.com':
         internal_attendees += 1
         continue
 
-    # Get the SLD and TLD
-    domain_list = domain_name.split('.', 1)
-    sld = domain_list[0]
-    tld = domain_list[1]
+    # if domain_name has gmail.com, yahoo.com, outlook.com skip it if company name is blank
+    if domain_name.lower() == 'gmail.com' \
+       or domain_name.lower() == 'yahoo.com' \
+       or domain_name.lower() == 'outlook.com':
+        non_corp_email_attendee += 1
+        if scrubbed_name == '':
+            continue
 
     # Build a dict of search terms by domain name
     # Searching terms are: scrubbed_name, first_word, sld
@@ -116,9 +128,9 @@ for index, value in df_registrations.iterrows():
         if data['file_name'] == '':
             data['file_name'] = ATD_filename
 
-        domain_dict[domain_name] = data
+        domain_dict[domain_name.lower()] = data
     else:
-        data = {'sld': sld,
+        data = {'sld': sld.lower(),
                 'search_terms': list({scrubbed_name.lower(), first_word.lower(), sld.lower()}),
                 'file_name': ATD_filename,
                 'status': lookup_status}
@@ -137,17 +149,52 @@ for index, value in df_registrations.iterrows():
 
     df_status = df_status.append(new_row, ignore_index=True)
 
-# # Make a DataFrame for searches
-# domain_dict = {'domain_name': {'sld': ' ',
-#                                'search_terms': ['stan', 'blanche'],
-#                                'file_name': 'file.txt',
 #
-my_df = {'domain_name': [],
-         'sld': [],
-         'search_term': [],
-         'status': [],
-         'file_name': []
-         }
+# END of Main Loop
+#
+
+
+#
+# Let's try to find the actual domain name for public email domains
+# yahoo.com, gmail.com, outlook.com.....
+#
+pub_domains = ['yahoo.com', 'gmail.com', 'outlook.com', 'aol.com']
+tmp_scrubbed_names = []
+for pub_domain in pub_domains:
+    if pub_domain in domain_dict:
+        tmp_scrubbed_names = domain_dict[pub_domain]['search_terms'] + tmp_scrubbed_names
+        del domain_dict[pub_domain]
+
+for x in ['self', 'yahoo', 'gmail', 'outlook', 'aol']:
+    try:
+        tmp_scrubbed_names.remove(x)
+    except:
+        pass
+tmp_scrubbed_names = list(set(tmp_scrubbed_names))
+
+for scrubbed_name in tmp_scrubbed_names:
+    for key, data in domain_dict.items():
+        orig_key = key
+        if scrubbed_name in data['search_terms']:
+            tmp_list = [scrubbed_name] + data['search_terms']
+            tmp_list = list(set(tmp_list))
+
+# Sort all the search terms from longest to shortest
+# Hopefully we find the MOST specific account team name first
+for key, data in domain_dict.items():
+    tmp_list= data['search_terms']
+    tmp_list.sort(reverse = True, key=len)
+    data['search_terms'] = tmp_list
+
+# Make a DataFrame from the clean domain_dict
+# This will be for INPUT to Power Automate Desktop
+# to use the Account Team Directory Lookup Tool
+ATDSearch_data = {'domain_name': [],
+                  'sld': [],
+                  'search_term': [],
+                  'status': [],
+                  'file_name': []
+                  }
 
 for domain_name, data in domain_dict.items():
     sld = data['sld']
@@ -155,42 +202,33 @@ for domain_name, data in domain_dict.items():
     status = data['status']
 
     for value in data['search_terms']:
-        my_df['domain_name'].append(domain_name)
-        my_df['sld'].append(sld)
-        my_df['search_term'].append(value)
-        my_df['status'].append(status)
-        my_df['file_name'].append(file_name)
+        ATDSearch_data['domain_name'].append(domain_name)
+        ATDSearch_data['sld'].append(sld)
+        ATDSearch_data['search_term'].append(value)
+        ATDSearch_data['status'].append(status)
+        ATDSearch_data['file_name'].append(file_name)
 
-jim_df = pd.DataFrame(my_df)
-print(jim_df)
-jim_df.to_excel(os.path.join(my_sheet_dir, 'jim.xlsx'), index=False)
-exit()
-# df_search = pd.DataFrame(tmp_df)
-# print(df_search)
-# exit()
-# for key, value in domain_dict.items():
-#     for tmp_val in value:
-#         new_row = {'domain_name': key,
-#                   'search_terms': tmp_val,
-#                   'file_name': [],
-#                   'status': []
-#                   }
-#         df_search = df_search.append(new_row, ignore_index=True)
-
-# print (df_search)
-# # df_search.to_excel(os.path.join(my_sheet_dir, app_cfg['ATD_LOOKUP_STATUS']), index=False)
-# df_search.to_excel(os.path.join(my_sheet_dir, 'jim.xlsx'), index=False)
+df_ATDSearch = pd.DataFrame(ATDSearch_data)
+df_ATDSearch.to_excel(os.path.join(my_sheet_dir, app_cfg['ATD_SEARCH_TERMS']), index=False)
 
 # Output the Status Sheet
-df_status.to_excel(os.path.join(my_sheet_dir, app_cfg['ATD_LOOKUP_STATUS']), index=False)
+df_status.to_excel(os.path.join(my_sheet_dir, app_cfg['REGISTRATION_ANALYSIS']), index=False)
 print()
 print('Total Registered', total_registered)
 print('\tInternal Attendees', internal_attendees)
-# print('\tDuplicates', duplicates)
+print('\tNon-Corp Email Attendees', non_corp_email_attendee)
 print('\tTotal To Be Searched', df_status['orig_email'].count())
 print('\t\tAlready Found', already_found)
 print('\t\tRemaining Searches to go', df_status['orig_email'].count() - already_found)
+
 exit()
+
+
+
+
+
+
+
 
 #
 # Create a dataframe template for merging all ATD Sheets
