@@ -44,4 +44,5 @@ if __name__ == "__main__":
     # moodle_user = moodle_get_user(m_api_key, 'majundi')
 
     moodle_user = mdl_get_user(m_api_key, 4935)  # kluke@homestreet.com
+
     print(json.dumps(moodle_user.json(), indent=4, sort_keys=True))
