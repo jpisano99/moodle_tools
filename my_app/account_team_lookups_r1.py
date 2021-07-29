@@ -21,8 +21,18 @@ def analyze_registrations():
     #
     my_registration_sheet = os.path.join(my_sheet_dir, app_cfg['RAW_REGISTRATIONS'])
     df_registrations = pd.read_excel(my_registration_sheet)
-    print(df_registrations.shape)
-    print('Opening Sheet:', my_registration_sheet)
+    print('Opening Event Registration Sheet:', my_registration_sheet)
+    print('\tFound ', len(df_registrations), 'customer registrations from Cvent')
+    print()
+
+    #
+    # Open the SFDC by Domain lookup
+    #
+    my_sfdc_domains_sheet = os.path.join(my_sheet_dir, app_cfg['SFDC_BY_DOMAIN'])
+    df_sfdc = pd.read_excel(my_sfdc_domains_sheet)
+    print('Opening SFDC Domain Lookups:', my_sfdc_domains_sheet)
+    print('\tFound ', len(df_sfdc), 'Company domains in SFDC')
+    print()
 
     #
     # Gather existing ATD customer names and file paths
@@ -36,6 +46,8 @@ def analyze_registrations():
             ATD_dir_path = os.path.join(ATD_Repo, file)
             ATD_file_pathnames.append(ATD_dir_path)
             found_customers.append(file[8:-4])
+    print('Found: ', len(ATD_file_pathnames), ' files in the local ATD repo')
+    print()
 
     #
     # Create an interim sheet for analysis
@@ -51,7 +63,7 @@ def analyze_registrations():
                  'ATD_filename',
                  'search_terms',
                  'email_addresses',
-                 'SFDC Account Name'
+                 'SFDC Account Names'
                  ]
     df_status = pd.DataFrame(columns=col_names)
     df_status.to_excel(os.path.join(my_sheet_dir, app_cfg['REGISTRATION_ANALYSIS']), index=False)
@@ -60,7 +72,8 @@ def analyze_registrations():
     # Create a sheet by just domains to hand to Power Automate Desktop
     #
     col_names = ['domain',
-                 'search_terms',
+                 'sfdc_account_name',
+                 'sfdc_frequency',
                  'lookup_status',
                  'ATD_filename',
                  'email_addresses'
@@ -115,12 +128,12 @@ def analyze_registrations():
         else:
             ATD_filename = ''
 
-        # if company_name has cisco skip it
+        # if company_name has cisco tag it
         if 'cisco' in company_name.lower() or domain_name == 'cisco.com':
             internal_attendees += 1
             lookup_status = 'Cisco INTERNAL-DO NOT LOOK UP'
 
-        # if domain_name has gmail.com, yahoo.com, outlook.com skip it if company name is blank
+        # if domain_name has gmail.com, yahoo.com, outlook.com tag it
         if domain_name.lower() == 'gmail.com' \
                 or domain_name.lower() == 'yahoo.com' \
                 or domain_name.lower() == 'outlook.com':
@@ -177,34 +190,16 @@ def analyze_registrations():
                    'search_terms': data['search_terms']}
 
         df_status = df_status.append(new_row, ignore_index=True)
+
+
+        for index, value in df_status.iterrows():
+            print(value['search_terms'], type(value['search_terms']))
+            for jim in value['search_terms']:
+                print (jim)
+            exit()
     #
     # END of Main Loop
     #
-
-    #
-    # Now loop over by_domain to build the Desktop Automate List
-    #
-    for domain, data in domain_dict.items():
-        for search_term in data['search_terms']:
-            # Check if we have found this search term and it's in the repo
-            # Make everything lowercase for this test
-            ATD_filename = 'ATDData_' + search_term + '.csv'
-            lookup_status = ''
-            if (os.path.join(ATD_Repo, ATD_filename)).lower() in (string.lower() for string in ATD_file_pathnames):
-                lookup_status = 'Already FOUND'
-                already_found += 1
-            else:
-                ATD_filename = ''
-
-            new_row = {'domain': domain,
-                       'search_terms': search_term,
-                       'lookup_status': lookup_status,
-                       'ATD_filename': ATD_filename,
-                       'email_addresses': data['emails']
-                       }
-            df_by_domain = df_by_domain.append(new_row, ignore_index=True)
-
-    df_by_domain.to_excel(os.path.join(my_sheet_dir, 'by_domain.xlsx'), index=False)
 
     print('Unique Domains Found:', len(domain_dict))
     df_status.to_excel(os.path.join(my_sheet_dir, app_cfg['REGISTRATION_ANALYSIS']), index=False)
@@ -255,8 +250,50 @@ def merge_ATD_repo():
 
 
 if __name__ == "__main__":
-    # analyze_registrations()
-    merge_ATD_repo()
+    analyze_registrations()
+    # merge_ATD_repo()
+
+
+
+
+    #
+    # Now loop over by_domain to build the Desktop Automate List
+    #
+    # for domain, data in domain_dict.items():
+    #     for search_term in data['search_terms']:
+    #         # Check if we have found this search term and it's in the repo
+    #         # Make everything lowercase for this test
+    #         ATD_filename = 'ATDData_' + search_term + '.csv'
+    #         lookup_status = ''
+    #         if (os.path.join(ATD_Repo, ATD_filename)).lower() in (string.lower() for string in ATD_file_pathnames):
+    #             lookup_status = 'Already FOUND'
+    #             already_found += 1
+    #         else:
+    #             ATD_filename = ''
+    #
+    #         new_row = {'domain': domain,
+    #                    'search_terms': search_term,
+    #                    'lookup_status': lookup_status,
+    #                    'ATD_filename': ATD_filename,
+    #                    'email_addresses': data['emails']
+    #                    }
+    #         df_by_domain = df_by_domain.append(new_row, ignore_index=True)
+    #
+    # df_by_domain.to_excel(os.path.join(my_sheet_dir, 'by_domain.xlsx'), index=False)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

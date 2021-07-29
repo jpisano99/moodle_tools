@@ -20,12 +20,28 @@ app_cfg = dict(
     UPDATE_DATE='',
     META_DATA_FILE='config_data.json',
 
-    # Raw Data Files to ingest
-    # RAW_REGISTRATIONS='TA Master Subscriptions as of',
+    # Cvent Registration Directories and FilesRaw Data Files to ingest
     RAW_REGISTRATIONS='Secure_Workload_Tetration_as_of_6_7_21.xlsx',
+    REGISTRATION_ANALYSIS='Registration_Analysis.xlsx',
 
     # Scrubbed Data Working Files
     XLS_SUBSCRIPTIONS='tmp_Master Subscriptions.xlsx',
+
+    # SFDC Directories and Files
+    SFDC_REPO='SFDC_Files',
+    SFDC_RAW='SFDC_Raw_Results.xlsx',
+    SFDC_SCRUBBED='SFDC_Scrubbed_Results.xlsx',
+    SFDC_BY_DOMAIN='SFDC_by_domain.xlsx',
+
+    # Account Team Directories (ATD) and Files
+    ATD_LOOKUPS_SUB_DIR='AccountTeamLookups',
+    ATD_REPO='ATD_Files',
+    ATD_SEARCH_TERMS='ATD_Search_Terms.xlsx',
+    ATD_RESULTS='ATD_Raw_Results.xlsx',
+
+
+
+
 
     #
     # Testing

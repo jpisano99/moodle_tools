@@ -14,30 +14,15 @@ SFDC_Repo = os.path.join(my_sheet_dir, app_cfg['SFDC_REPO'])
 print('Using Directory:', my_sheet_dir)
 print('SFDC Repo Directory:', SFDC_Repo)
 
-#
-# Gather existing SFDC customer names and file paths
-#
-SFDC_files = os.listdir(SFDC_Repo)
-found_customers = []
-SFDC_file_pathnames = []
-
 
 def merge_sfdc():
-    # #
-    # # Get Directories and Paths to Files
-    # #
-    # my_sheet_dir = os.path.join(app_cfg['HOME'], app_cfg['MOUNT_POINT'], app_cfg['MY_APP_DIR'],
-    #                             app_cfg['ATD_LOOKUPS_SUB_DIR'])
-    # SFDC_Repo = os.path.join(my_sheet_dir, app_cfg['SFDC_REPO'])
-    # print('Using Directory:', my_sheet_dir)
-    # print('SFDC Repo Directory:', SFDC_Repo)
     #
-    # #
-    # # Gather existing SFDC customer names and file paths
-    # #
-    # SFDC_files = os.listdir(SFDC_Repo)
-    # found_customers = []
-    # SFDC_file_pathnames = []
+    # Gather existing SFDC customer names and file paths
+    #
+    SFDC_files = os.listdir(SFDC_Repo)
+
+    found_customers = []
+    SFDC_file_pathnames = []
 
     for file in SFDC_files:
         if file[:9] == "SFDCData_":
@@ -116,49 +101,32 @@ def scrub_sfdc():
 
 
 def build_domain_lookup():
-    col_names = ['domain',
-                 'Account Name'
-                 ]
-    df_by_domain = pd.DataFrame(columns=col_names)
+    # Build a sheet from SFDC Data to Contact email domain data to discover the
+    # Cisco official Account_Name
 
     print('Opening', os.path.join(my_sheet_dir, app_cfg['SFDC_SCRUBBED']))
     df_master = pd.read_excel(os.path.join(my_sheet_dir, app_cfg['SFDC_SCRUBBED']))
+    # df_master = pd.read_excel(os.path.join(my_sheet_dir, 'SFDC_Scrubbed_Results_testing.xlsx'))
     print('\tOpened!!!')
-    domain_dict = {}
-    new_row = {}
 
-    for index, value in df_master.iterrows():
-        domain = value['domain']
-        account_name = value['Account Name']
+    # Create a group_by domain and known as account name
+    df_by_domain = df_master.groupby(['domain', 'Account Name'], as_index=False)['Email'].count()
 
-        # If the domain is blank skip this
-        if isinstance(domain, float):
-            print('Skipping ', account_name, ' has blank domain')
-            continue
-        # a-f.ch
-        # See if this domain is already in dict
-        add_row = False
-        if domain not in domain_dict:
-            domain_dict[domain] = [account_name]
-            add_row = True
-        else:
-            account_name_list = domain_dict[domain]
-            if account_name not in account_name_list:
-                account_name_list.append(account_name)
-                add_row = True
+    # Now sort by the most frequently known Account Name
+    df_sorted = df_by_domain.sort_values(by=['domain', 'Email'], ascending=[True, False])
+    df_sorted .to_excel(os.path.join(my_sheet_dir, app_cfg['SFDC_BY_DOMAIN']), index=False)
 
-        if add_row is True:
-            new_row = {'domain': domain,
-                       'Account Name': account_name
-                       }
-            df_by_domain = df_by_domain.append(new_row, ignore_index=True)
-
-    df_by_domain.to_excel(os.path.join(my_sheet_dir, 'SFDC_by_domain.xlsx'), index=False)
+    # Clean up
+    del df_by_domain
+    del df_sorted
+    del df_master
     return
 
 
 if __name__ == "__main__":
-    build_domain_lookup()
-    # scrub_sfdc()
     # merge_sfdc()
+    # scrub_sfdc()
+    build_domain_lookup()
+
+
 
