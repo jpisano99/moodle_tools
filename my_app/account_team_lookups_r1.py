@@ -1,17 +1,20 @@
 import pandas as pd
+import numpy as np
 import math
 # import xlrd
 import os
 import time
 from settings import app_cfg
 
+#
+# Get Directories and Paths to Files
+#
+my_sheet_dir = os.path.join(app_cfg['HOME'], app_cfg['MOUNT_POINT'], app_cfg['MY_APP_DIR'],
+                            app_cfg['ATD_LOOKUPS_SUB_DIR'])
+
 
 def analyze_registrations():
-    #
-    # Get Directories and Paths to Files
-    #
-    my_sheet_dir = os.path.join(app_cfg['HOME'], app_cfg['MOUNT_POINT'], app_cfg['MY_APP_DIR'],
-                                app_cfg['ATD_LOOKUPS_SUB_DIR'])
+
     ATD_Repo = os.path.join(my_sheet_dir, app_cfg['ATD_REPO'])
     print('Using Directory:', my_sheet_dir)
     print('ATD Repo Directory:', ATD_Repo)
@@ -55,31 +58,17 @@ def analyze_registrations():
     col_names = ['orig_email',
                  'orig_company_name',
                  'domain',
+                 'SFDC Account Names',
+                 'search_terms',
+                 'lookup_status',
+                 'ATD_filename',
                  'scrubbed_company_name',
                  'first_word_company_name',
                  'second_level_domain',
-                 'top_level_domain',
-                 'lookup_status',
-                 'ATD_filename',
-                 'search_terms',
-                 'email_addresses',
-                 'SFDC Account Names'
+                 'top_level_domain'
                  ]
     df_status = pd.DataFrame(columns=col_names)
     df_status.to_excel(os.path.join(my_sheet_dir, app_cfg['REGISTRATION_ANALYSIS']), index=False)
-
-    #
-    # Create a sheet by just domains to hand to Power Automate Desktop
-    #
-    col_names = ['domain',
-                 'sfdc_account_name',
-                 'sfdc_frequency',
-                 'lookup_status',
-                 'ATD_filename',
-                 'email_addresses'
-                 ]
-    df_by_domain = pd.DataFrame(columns=col_names)
-    df_by_domain.to_excel(os.path.join(my_sheet_dir, 'by_domain.xlsx'), index=False)
 
     #
     # Loop over the registration data
@@ -104,6 +93,17 @@ def analyze_registrations():
         split_email = email_address.split('@')
         user_name = split_email[0]
         domain_name = split_email[1]
+
+        # Lookup this domain in SFDC for the first two legit Account Name
+        sfdc_names = ''
+        index = 0
+        df_tmp = df_sfdc.loc[df_sfdc['domain'] == domain_name]
+        for sfdc_index, sfdc_value in df_tmp.iterrows():
+            sfdc_names = sfdc_value['Account Name'] + ':' + sfdc_names
+            index += 1
+            if index == 2:
+                break
+        sfdc_names = sfdc_names[:-1]  # Remove trailing field separator (:)
 
         # Get the SLD and TLD
         domain_list = domain_name.split('.', 1)
@@ -140,66 +140,24 @@ def analyze_registrations():
             non_corp_email_attendee += 1
             lookup_status = 'Non Corporate Email-DO NOT LOOK UP'
 
-        # Build a dict of search terms by domain name
-        # Searching terms are: scrubbed_name, first_word, sld
-        # Make everything lowercase for consistency
-        if domain_name.lower() in domain_dict:
-            data = domain_dict[domain_name.lower()]
-
-            # updates the list of search terms
-            merge_list = data['search_terms'] + [scrubbed_name.lower(), first_word.lower(), sld.lower()]
-            merge_list = list(set(merge_list))  # Remove duplicate search terms
-            merge_list.sort(key=len, reverse=True)  # Sort the list from longest to shortest search term
-            data['search_terms'] = merge_list
-
-            # Keep a list of email addresses for this domain
-            merge_list = data['emails'] + [email_address]
-            merge_list = list(set(merge_list))
-            data['emails'] = merge_list
-
-            if data['status'] == '':
-                data['status'] = lookup_status
-
-            if data['file_name'] == '':
-                data['file_name'] = ATD_filename
-
-            domain_dict[domain_name.lower()] = data
-        else:
-            # This is the first occurrence of this domain
-
-            search_terms = list({scrubbed_name.lower(), first_word.lower(), sld.lower()})
-            search_terms.sort(key=len, reverse=True)  # Sort the list from longest to shortest search term
-
-            data = {'sld': sld.lower(),
-                    'search_terms': search_terms,
-                    'emails': [email_address],
-                    'file_name': ATD_filename,
-                    'status': lookup_status}
-
-            domain_dict[domain_name.lower()] = data
+        # Ways to search the ATD for this registrant
+        # search_terms = list({scrubbed_name.lower(), first_word.lower(), sld.lower()})
+        search_terms = scrubbed_name.lower() + ':' + first_word.lower() + ':' +sld.lower()
 
         new_row = {'orig_email': email_address,
                    'orig_company_name': company_name,
                    'domain': domain_name,
-                   'scrubbed_company_name': scrubbed_name,
-                   'first_word_company_name': first_word,
-                   'sld': sld,
-                   'tld': tld,
+                   'SFDC Account Names': sfdc_names,
+                   'search_terms': search_terms,
                    'lookup_status': lookup_status,
                    'ATD_filename': ATD_filename,
-                   'search_terms': data['search_terms']}
+                   'scrubbed_company_name': scrubbed_name,
+                   'first_word_company_name': first_word,
+                   'second_level_domain': sld,
+                   'top_level_domain': tld
+                   }
 
         df_status = df_status.append(new_row, ignore_index=True)
-
-
-        for index, value in df_status.iterrows():
-            print(value['search_terms'], type(value['search_terms']))
-            for jim in value['search_terms']:
-                print (jim)
-            exit()
-    #
-    # END of Main Loop
-    #
 
     print('Unique Domains Found:', len(domain_dict))
     df_status.to_excel(os.path.join(my_sheet_dir, app_cfg['REGISTRATION_ANALYSIS']), index=False)
@@ -207,7 +165,117 @@ def analyze_registrations():
     return
 
 
+def build_atd_lookup_table():
+    #
+    # Open the domain analysis sheet
+    #
+    my_domains = os.path.join(my_sheet_dir, app_cfg['REGISTRATION_ANALYSIS'])
+    df_domains = pd.read_excel(my_domains)
+    print('Opening Event Domain Analysis Sheet:', my_domains)
+    print('\tFound ', len(df_domains), 'customer registrations from Cvent')
+    print()
+
+    # Create a group_by domain and known as account name
+    # df_by_domain = df_domains.groupby(['domain', 'Account Name'], as_index=False)['Email'].count()
+    domains = df_domains['domain'].unique()
+    domains.sort()
+
+    for domain in domains:
+        tmp_list = []
+
+        filt = (df_domains['domain'] == domain)
+        for index, value in df_domains.loc[filt, ['search_terms', 'SFDC Account Names']].iterrows():
+            tmp_list = tmp_list + value['search_terms'].split(':')
+            print ('SFDC', value['SFDC Account Names'])
+
+        # Remove duplicates and sort longest to shortest search terms
+        tmp_list = list(set(tmp_list))
+        tmp_list.sort(reverse=True, key=len)
+        print(domain)
+        print('\t', tmp_list)
+        print()
+
+        # time.sleep(1)
+    exit()
+
+
+    #
+    #
+    # print('domain', domains)
+    #
+    # print('jim', domains)
+    #print(len(domains), type(domains))
+    exit()
+    # Now sort by the most frequently known Account Name
+    df_sorted = df_by_domain.sort_values(by=['domain', 'Email'], ascending=[True, False])
+    df_sorted .to_excel(os.path.join(my_sheet_dir, app_cfg['SFDC_BY_DOMAIN']), index=False)
+    domains = {}
+    for index, value in df_domains.iterrows():
+
+
+        pass
+
+
+    # #
+    # # Create a sheet by just domains to hand to Power Automate Desktop
+    # #
+    col_names = ['domain',
+                 'sfdc_account_name',
+                 'sfdc_frequency',
+                 'search_terms',
+                 'lookup_status',
+                 'ATD_filename',
+                 'email_addresses'
+                 ]
+    df_by_domain = pd.DataFrame(columns=col_names)
+    df_by_domain.to_excel(os.path.join(my_sheet_dir, 'by_domain.xlsx'), index=False)
+
+    domain_name = ''
+    # # Build a dict of search terms by domain name
+    # # Searching terms are: scrubbed_name, first_word, sld
+    # # Make everything lowercase for consistency
+    domain_dict = {}
+    if domain_name.lower() in domain_dict:
+        data = domain_dict[domain_name.lower()]
+
+        # updates the list of search terms
+        merge_list = data['search_terms'] + [scrubbed_name.lower(), first_word.lower(), sld.lower()]
+        merge_list = list(set(merge_list))  # Remove duplicate search terms
+        merge_list.sort(key=len, reverse=True)  # Sort the list from longest to shortest search term
+        data['search_terms'] = merge_list
+
+        # Keep a list of email addresses for this domain
+        merge_list = data['emails'] + [email_address]
+        merge_list = list(set(merge_list))
+        data['emails'] = merge_list
+
+        if data['status'] == '':
+            data['status'] = lookup_status
+
+        if data['file_name'] == '':
+            data['file_name'] = ATD_filename
+
+        domain_dict[domain_name.lower()] = data
+    else:
+        # This is the first occurrence of this domain
+
+        search_terms = list({scrubbed_name.lower(), first_word.lower(), sld.lower()})
+        search_terms.sort(key=len, reverse=True)  # Sort the list from longest to shortest search term
+
+        data = {'sld': sld.lower(),
+                'search_terms': search_terms,
+                'sfdc_account_name': sfdc_names,
+                'emails': [email_address],
+                'file_name': ATD_filename,
+                'status': lookup_status}
+
+        domain_dict[domain_name.lower()] = data
+
+    return
+
+
 def merge_ATD_repo():
+    # This pulls all the ATD files in the Repo directory into one master sheet (ATD_RESULTS)
     #
     # Get Directories and Paths to Files
     #
@@ -251,118 +319,5 @@ def merge_ATD_repo():
 
 if __name__ == "__main__":
     analyze_registrations()
+    # build_atd_lookup_table()
     # merge_ATD_repo()
-
-
-
-
-    #
-    # Now loop over by_domain to build the Desktop Automate List
-    #
-    # for domain, data in domain_dict.items():
-    #     for search_term in data['search_terms']:
-    #         # Check if we have found this search term and it's in the repo
-    #         # Make everything lowercase for this test
-    #         ATD_filename = 'ATDData_' + search_term + '.csv'
-    #         lookup_status = ''
-    #         if (os.path.join(ATD_Repo, ATD_filename)).lower() in (string.lower() for string in ATD_file_pathnames):
-    #             lookup_status = 'Already FOUND'
-    #             already_found += 1
-    #         else:
-    #             ATD_filename = ''
-    #
-    #         new_row = {'domain': domain,
-    #                    'search_terms': search_term,
-    #                    'lookup_status': lookup_status,
-    #                    'ATD_filename': ATD_filename,
-    #                    'email_addresses': data['emails']
-    #                    }
-    #         df_by_domain = df_by_domain.append(new_row, ignore_index=True)
-    #
-    # df_by_domain.to_excel(os.path.join(my_sheet_dir, 'by_domain.xlsx'), index=False)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#
-# #
-# # Let's try to find the actual domain name for public email domains
-# # yahoo.com, gmail.com, outlook.com.....
-# #
-# pub_domains = ['yahoo.com', 'gmail.com', 'outlook.com', 'aol.com']
-# tmp_scrubbed_names = []
-# for pub_domain in pub_domains:
-#     if pub_domain in domain_dict:
-#         tmp_scrubbed_names = domain_dict[pub_domain]['search_terms'] + tmp_scrubbed_names
-#         del domain_dict[pub_domain]
-#
-# for x in ['self', 'yahoo', 'gmail', 'outlook', 'aol']:
-#     try:
-#         tmp_scrubbed_names.remove(x)
-#     except NameError:
-#         print('Found error')
-# tmp_scrubbed_names = list(set(tmp_scrubbed_names))
-#
-# for scrubbed_name in tmp_scrubbed_names:
-#     for key, data in domain_dict.items():
-#         orig_key = key
-#         if scrubbed_name in data['search_terms']:
-#             tmp_list = [scrubbed_name] + data['search_terms']
-#             tmp_list = list(set(tmp_list))
-#
-# # Sort all the search terms from longest to shortest
-# # Hopefully we find the MOST specific account team name first
-# for key, data in domain_dict.items():
-#     tmp_list = data['search_terms']
-#     tmp_list.sort(reverse=True, key=len)
-#     data['search_terms'] = tmp_list
-#
-# # Make a DataFrame from the clean domain_dict
-# # This will be for INPUT to Power Automate Desktop
-# # to use the Account Team Directory Lookup Tool
-# ATDSearch_data = {'domain_name': [],
-#                   'sld': [],
-#                   'search_term': [],
-#                   'status': [],
-#                   'file_name': []
-#                   }
-#
-# for domain_name, data in domain_dict.items():
-#     sld = data['sld']
-#     file_name = data['file_name']
-#     status = data['status']
-#
-#     for value in data['search_terms']:
-#         ATDSearch_data['domain_name'].append(domain_name)
-#         ATDSearch_data['sld'].append(sld)
-#         ATDSearch_data['search_term'].append(value)
-#         ATDSearch_data['status'].append(status)
-#         ATDSearch_data['file_name'].append(file_name)
-#
-# df_ATDSearch = pd.DataFrame(ATDSearch_data)
-# df_ATDSearch.to_excel(os.path.join(my_sheet_dir, app_cfg['ATD_SEARCH_TERMS']), index=False)
-#
-# # Output the Status Sheet
-# df_status.to_excel(os.path.join(my_sheet_dir, app_cfg['REGISTRATION_ANALYSIS']), index=False)
-# print()
-# print('Total Registered', total_registered)
-# print('\tInternal Attendees', internal_attendees)
-# print('\tNon-Corp Email Attendees', non_corp_email_attendee)
-# print('\tTotal To Be Searched', df_status['orig_email'].count())
-# print('\t\tAlready Found', already_found)
-# print('\t\tRemaining Searches to go', df_status['orig_email'].count() - already_found)
-#
-# exit()
