@@ -93,17 +93,18 @@ def analyze_registrations():
         split_email = email_address.split('@')
         user_name = split_email[0]
         domain_name = split_email[1]
+        domain_name = domain_name.lower()  # Force all domains to lower case
 
         # Lookup this domain in SFDC for the first two legit Account Name
         sfdc_names = ''
         index = 0
         df_tmp = df_sfdc.loc[df_sfdc['domain'] == domain_name]
         for sfdc_index, sfdc_value in df_tmp.iterrows():
-            sfdc_names = sfdc_value['Account Name'] + ':' + sfdc_names
+            sfdc_names = sfdc_value['Account Name'] + '::' + sfdc_names
             index += 1
             if index == 2:
                 break
-        sfdc_names = sfdc_names[:-1]  # Remove trailing field separator (:)
+        sfdc_names = sfdc_names[:-2]  # Remove trailing field separator (:)
 
         # Get the SLD and TLD
         domain_list = domain_name.split('.', 1)
@@ -142,7 +143,7 @@ def analyze_registrations():
 
         # Ways to search the ATD for this registrant
         # search_terms = list({scrubbed_name.lower(), first_word.lower(), sld.lower()})
-        search_terms = scrubbed_name.lower() + ':' + first_word.lower() + ':' +sld.lower()
+        search_terms = scrubbed_name.lower() + '::' + first_word.lower() + '::' +sld.lower()
 
         new_row = {'orig_email': email_address,
                    'orig_company_name': company_name,
@@ -180,121 +181,76 @@ def build_atd_lookup_table():
     domains = df_domains['domain'].unique()
     domains.sort()
 
+    # Create a blank sheet for output
+    df_atd_lookups = pd.DataFrame(columns=['domain',
+                                           'sfdc_account_name',
+                                           'search_terms',
+                                           'status',
+                                           'atd_file_name',
+                                           'emails'])
+    df_atd_lookups.to_excel(os.path.join(my_sheet_dir, 'atd_lookups.xlsx'), index=False)
+
     for domain in domains:
-        tmp_list = []
+        tmp_search_terms = []
+        tmp_sfdc_names = ''
+        tmp_atd_filename = ''
+        tmp_lookup_status = ''
+        tmp_emails = []
 
         filt = (df_domains['domain'] == domain)
-        for index, value in df_domains.loc[filt, ['search_terms', 'SFDC Account Names']].iterrows():
-            tmp_list = tmp_list + value['search_terms'].split(':')
-            print ('SFDC', value['SFDC Account Names'])
+        for index, value in df_domains.loc[filt].iterrows():
+            tmp_search_terms = tmp_search_terms + value['search_terms'].split('::')
+            tmp_sfdc_names = value['SFDC Account Names']
+            tmp_emails.append(value['orig_email'])
+
+            if isinstance(value['ATD_filename'], str):
+                tmp_atd_filename = value['ATD_filename']
+
+            if isinstance(value['lookup_status'], str):
+                tmp_lookup_status = value['lookup_status']
 
         # Remove duplicates and sort longest to shortest search terms
-        tmp_list = list(set(tmp_list))
-        tmp_list.sort(reverse=True, key=len)
-        print(domain)
-        print('\t', tmp_list)
-        print()
+        tmp_search_terms = list(set(tmp_search_terms))
+        tmp_search_terms.sort(reverse=True, key=len)
 
-        # time.sleep(1)
-    exit()
+        # Format fields with the :: field separator
+        tmp_search_terms = '::'.join(map(str, tmp_search_terms))
+        tmp_emails = '::'.join(map(str, tmp_emails))
 
+        # Add a new row to the output for Power Automate
+        data = {'domain': domain,
+                'sfdc_account_name': tmp_sfdc_names,
+                'search_terms': tmp_search_terms,
+                'status': tmp_lookup_status,
+                'atd_file_name': tmp_atd_filename,
+                'emails': tmp_emails}
+        df_atd_lookups = df_atd_lookups.append(data, ignore_index=True)
 
-    #
-    #
-    # print('domain', domains)
-    #
-    # print('jim', domains)
-    #print(len(domains), type(domains))
-    exit()
-    # Now sort by the most frequently known Account Name
-    df_sorted = df_by_domain.sort_values(by=['domain', 'Email'], ascending=[True, False])
-    df_sorted .to_excel(os.path.join(my_sheet_dir, app_cfg['SFDC_BY_DOMAIN']), index=False)
-    domains = {}
-    for index, value in df_domains.iterrows():
-
-
-        pass
-
-
-    # #
-    # # Create a sheet by just domains to hand to Power Automate Desktop
-    # #
-    col_names = ['domain',
-                 'sfdc_account_name',
-                 'sfdc_frequency',
-                 'search_terms',
-                 'lookup_status',
-                 'ATD_filename',
-                 'email_addresses'
-                 ]
-    df_by_domain = pd.DataFrame(columns=col_names)
-    df_by_domain.to_excel(os.path.join(my_sheet_dir, 'by_domain.xlsx'), index=False)
-
-    domain_name = ''
-    # # Build a dict of search terms by domain name
-    # # Searching terms are: scrubbed_name, first_word, sld
-    # # Make everything lowercase for consistency
-    domain_dict = {}
-    if domain_name.lower() in domain_dict:
-        data = domain_dict[domain_name.lower()]
-
-        # updates the list of search terms
-        merge_list = data['search_terms'] + [scrubbed_name.lower(), first_word.lower(), sld.lower()]
-        merge_list = list(set(merge_list))  # Remove duplicate search terms
-        merge_list.sort(key=len, reverse=True)  # Sort the list from longest to shortest search term
-        data['search_terms'] = merge_list
-
-        # Keep a list of email addresses for this domain
-        merge_list = data['emails'] + [email_address]
-        merge_list = list(set(merge_list))
-        data['emails'] = merge_list
-
-        if data['status'] == '':
-            data['status'] = lookup_status
-
-        if data['file_name'] == '':
-            data['file_name'] = ATD_filename
-
-        domain_dict[domain_name.lower()] = data
-    else:
-        # This is the first occurrence of this domain
-
-        search_terms = list({scrubbed_name.lower(), first_word.lower(), sld.lower()})
-        search_terms.sort(key=len, reverse=True)  # Sort the list from longest to shortest search term
-
-        data = {'sld': sld.lower(),
-                'search_terms': search_terms,
-                'sfdc_account_name': sfdc_names,
-                'emails': [email_address],
-                'file_name': ATD_filename,
-                'status': lookup_status}
-
-        domain_dict[domain_name.lower()] = data
+    df_atd_lookups.to_excel(os.path.join(my_sheet_dir, 'atd_lookups.xlsx'), index=False)
 
     return
 
-
-def merge_ATD_repo():
+def merge_atd_repo():
     # This pulls all the ATD files in the Repo directory into one master sheet (ATD_RESULTS)
     #
     # Get Directories and Paths to Files
     #
     my_sheet_dir = os.path.join(app_cfg['HOME'], app_cfg['MOUNT_POINT'], app_cfg['MY_APP_DIR'],
                                 app_cfg['ATD_LOOKUPS_SUB_DIR'])
-    ATD_Repo = os.path.join(my_sheet_dir, app_cfg['ATD_REPO'])
+    atd_repo = os.path.join(my_sheet_dir, app_cfg['ATD_REPO'])
     print('Using Directory:', my_sheet_dir)
-    print('ATD Repo Directory:', ATD_Repo)
+    print('ATD Repo Directory:', atd_repo)
 
     #
     # Gather existing ATD customer names and file paths
     #
-    ATD_files = os.listdir(ATD_Repo)
+    ATD_files = os.listdir(atd_repo)
     found_customers = []
     ATD_file_pathnames = []
 
     for file in ATD_files:
         if file[:8] == "ATDData_":
-            ATD_dir_path = os.path.join(ATD_Repo, file)
+            ATD_dir_path = os.path.join(atd_repo, file)
             ATD_file_pathnames.append(ATD_dir_path)
             found_customers.append(file[8:-4])
 
@@ -318,6 +274,6 @@ def merge_ATD_repo():
 
 
 if __name__ == "__main__":
-    analyze_registrations()
-    # build_atd_lookup_table()
-    # merge_ATD_repo()
+    # analyze_registrations()  # Take Raw Registrations from CVent pages and create additional columns
+    build_atd_lookup_table()  # Take the output of analyze_registrations() and build a file to hand to Power Automate
+    # merge_atd_repo() # After we have gathered all the ATD lookups MERGE them into one master file
