@@ -1,7 +1,7 @@
 import pandas as pd
 import os
 from settings import app_cfg
-
+import time
 #
 # Get Directories and Paths to Files
 #
@@ -10,9 +10,9 @@ my_sheet_dir = os.path.join(app_cfg['HOME'], app_cfg['MOUNT_POINT'], app_cfg['MY
 
 
 def analyze_registrations():
-    ATD_Repo = os.path.join(my_sheet_dir, app_cfg['ATD_REPO'])
-    print('Using Directory:', my_sheet_dir)
-    print('ATD Repo Directory:', ATD_Repo)
+    # This script scans Cvent Registrations and creates a list of possible search terms
+    # to search the ATD
+    # It also adds the first TWO "company names" based of the email domain from SFDC data
 
     #
     # Open the CVent registration sheet
@@ -33,21 +33,6 @@ def analyze_registrations():
     print()
 
     #
-    # Gather existing ATD customer names and file paths
-    #
-    ATD_files = os.listdir(ATD_Repo)
-    found_customers = []
-    ATD_file_pathnames = []
-
-    for file in ATD_files:
-        if file[:8] == "ATDData_":
-            ATD_dir_path = os.path.join(ATD_Repo, file)
-            ATD_file_pathnames.append(ATD_dir_path)
-            found_customers.append(file[8:-4])
-    print('Found: ', len(ATD_file_pathnames), ' files in the local ATD repo')
-    print()
-
-    #
     # Create an interim sheet for analysis
     #
     col_names = ['orig_email',
@@ -55,8 +40,6 @@ def analyze_registrations():
                  'domain',
                  'SFDC Account Names',
                  'search_terms',
-                 'lookup_status',
-                 'ATD_filename',
                  'scrubbed_company_name',
                  'first_word_company_name',
                  'second_level_domain',
@@ -100,6 +83,8 @@ def analyze_registrations():
             if index == 2:
                 break
         sfdc_names = sfdc_names[:-2]  # Remove trailing field separator (:)
+        if len(sfdc_names) == 0:
+            sfdc_names = 'None Found'
 
         # Get the SLD and TLD
         domain_list = domain_name.split('.', 1)
@@ -115,14 +100,6 @@ def analyze_registrations():
         scrubbed_name = (scrubbed_name.replace('.', ' ')).strip()  # Replace Periods with Spaces
         scrubbed_name = (scrubbed_name.replace('\'', '')).strip()  # Replace Apostrophe with nulls
         first_word = (scrubbed_name.split()[0]).strip()  # Get the first word of the name
-
-        # Check to see if we have already found this company name
-        ATD_filename = 'ATDData_' + scrubbed_name + '.csv'
-        if os.path.join(ATD_Repo, ATD_filename) in ATD_file_pathnames:
-            lookup_status = 'Already FOUND via '+scrubbed_name
-            already_found += 1
-        else:
-            ATD_filename = ''
 
         # if company_name has cisco tag it
         if 'cisco' in company_name.lower() or domain_name == 'cisco.com':
@@ -145,8 +122,6 @@ def analyze_registrations():
                    'domain': domain_name,
                    'SFDC Account Names': sfdc_names,
                    'search_terms': search_terms,
-                   'lookup_status': lookup_status,
-                   'ATD_filename': ATD_filename,
                    'scrubbed_company_name': scrubbed_name,
                    'first_word_company_name': first_word,
                    'second_level_domain': sld,
@@ -162,6 +137,26 @@ def analyze_registrations():
 
 
 def build_atd_lookup_table():
+    # This script creates the file we will give to Power Automate to perform ATD lookups
+
+    #
+    # First Inventory the local ATD Directory
+    #
+    atd_repo = os.path.join(my_sheet_dir, app_cfg['ATD_REPO'])
+    print('Using Directory:', my_sheet_dir)
+    print('ATD Repo Directory:', atd_repo)
+
+    # Gather existing ATD filenames into dict of search_terms
+    atd_filenames = os.listdir(atd_repo)
+    atd_filename_dict = {}
+    print(atd_filenames)
+
+    for filename in atd_filenames:
+        if filename[:8] == "ATDData_":
+            atd_filename_dict[filename[8:-4]] = os.path.join(atd_repo, filename)
+
+    print('Found: ', len(atd_filenames), ' files in the local ATD repo')
+
     #
     # Open the domain analysis sheet
     #
@@ -198,11 +193,11 @@ def build_atd_lookup_table():
             tmp_sfdc_names = value['SFDC Account Names']
             tmp_emails.append(value['orig_email'])
 
-            if isinstance(value['ATD_filename'], str):
-                tmp_atd_filename = value['ATD_filename']
+            # if isinstance(value['ATD_filename'], str):
+            #     tmp_atd_filename = value['ATD_filename']
 
-            if isinstance(value['lookup_status'], str):
-                tmp_lookup_status = value['lookup_status']
+            # if isinstance(value['lookup_status'], str):
+            #     tmp_lookup_status = value['lookup_status']
 
         # Remove duplicates and sort longest to shortest search terms
         tmp_search_terms = list(set(tmp_search_terms))
@@ -211,6 +206,25 @@ def build_atd_lookup_table():
         # Format fields with the :: field separator
         tmp_search_terms = '::'.join(map(str, tmp_search_terms))
         tmp_emails = '::'.join(map(str, tmp_emails))
+
+
+
+        # Now check the status of this in the ATD Repo
+        if tmp_sfdc_names == 'None Found':
+            tmp_sfdc_names = ''
+        tmp_list = tmp_sfdc_names.split('::') + tmp_search_terms.split('::')
+        tmp_atd_filename = ''
+        tmp_lookup_status = ''
+        for x in tmp_list:
+            if x in atd_filename_dict:
+                tmp_atd_filename = atd_filename_dict[x]
+                tmp_lookup_status = "FOUND via " + x
+                break
+            else:
+                tmp_lookup_status = "NOT FOUND"
+
+
+
 
         # Add a new row to the output for Power Automate
         data = {'domain': domain,
@@ -269,6 +283,6 @@ def merge_atd_repo():
 
 
 if __name__ == "__main__":
-    analyze_registrations()  # Take Raw Registrations from CVent pages and create additional columns
-    # build_atd_lookup_table()  # Take the output of analyze_registrations() and build a file to hand to Power Automate
+    # analyze_registrations()  # Take Raw Registrations from CVent pages and create additional columns
+    build_atd_lookup_table()  # Take the output of analyze_registrations() and build a file to hand to Power Automate
     # merge_atd_repo() # After we have gathered all the ATD lookups MERGE them into one master file
