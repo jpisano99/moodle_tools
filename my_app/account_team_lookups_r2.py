@@ -101,18 +101,6 @@ def analyze_registrations():
         scrubbed_name = (scrubbed_name.replace('\'', '')).strip()  # Replace Apostrophe with nulls
         first_word = (scrubbed_name.split()[0]).strip()  # Get the first word of the name
 
-        # if company_name has cisco tag it
-        if 'cisco' in company_name.lower() or domain_name == 'cisco.com':
-            internal_attendees += 1
-            lookup_status = 'Cisco INTERNAL-DO NOT LOOK UP'
-
-        # if domain_name has gmail.com, yahoo.com, outlook.com tag it
-        if domain_name.lower() == 'gmail.com' \
-                or domain_name.lower() == 'yahoo.com' \
-                or domain_name.lower() == 'outlook.com':
-            non_corp_email_attendee += 1
-            lookup_status = 'Non Corporate Email-DO NOT LOOK UP'
-
         # Ways to search the ATD for this registrant
         # search_terms = list({scrubbed_name.lower(), first_word.lower(), sld.lower()})
         search_terms = scrubbed_name.lower() + '::' + first_word.lower() + '::' +sld.lower()
@@ -158,11 +146,11 @@ def build_atd_lookup_table():
     print('Found: ', len(atd_filenames), ' files in the local ATD repo')
 
     #
-    # Open the domain analysis sheet
+    # Open the registration analysis sheet
     #
     my_domains = os.path.join(my_sheet_dir, app_cfg['REGISTRATION_ANALYSIS'])
     df_domains = pd.read_excel(my_domains)
-    print('Opening Event Domain Analysis Sheet:', my_domains)
+    print('Opening Registration Analysis Sheet:', my_domains)
     print('\tFound ', len(df_domains), 'customer registrations from Cvent')
     print()
 
@@ -178,7 +166,7 @@ def build_atd_lookup_table():
                                            'status',
                                            'atd_file_name',
                                            'emails'])
-    df_atd_lookups.to_excel(os.path.join(my_sheet_dir, 'atd_lookups.xlsx'), index=False)
+    df_atd_lookups.to_excel(os.path.join(my_sheet_dir, app_cfg['ATD_LOOKUP_TABLE']), index=False)
 
     for domain in domains:
         tmp_search_terms = []
@@ -193,12 +181,6 @@ def build_atd_lookup_table():
             tmp_sfdc_names = value['SFDC Account Names']
             tmp_emails.append(value['orig_email'])
 
-            # if isinstance(value['ATD_filename'], str):
-            #     tmp_atd_filename = value['ATD_filename']
-
-            # if isinstance(value['lookup_status'], str):
-            #     tmp_lookup_status = value['lookup_status']
-
         # Remove duplicates and sort longest to shortest search terms
         tmp_search_terms = list(set(tmp_search_terms))
         tmp_search_terms.sort(reverse=True, key=len)
@@ -207,9 +189,7 @@ def build_atd_lookup_table():
         tmp_search_terms = '::'.join(map(str, tmp_search_terms))
         tmp_emails = '::'.join(map(str, tmp_emails))
 
-
-
-        # Now check the status of this in the ATD Repo
+        # Now check the status of this domain in the ATD Repo
         if tmp_sfdc_names == 'None Found':
             tmp_sfdc_names = ''
         tmp_list = tmp_sfdc_names.split('::') + tmp_search_terms.split('::')
@@ -218,13 +198,22 @@ def build_atd_lookup_table():
         for x in tmp_list:
             if x in atd_filename_dict:
                 tmp_atd_filename = atd_filename_dict[x]
-                tmp_lookup_status = "FOUND via " + x
+                tmp_lookup_status = "FOUND in Repo via " + x
                 break
             else:
-                tmp_lookup_status = "NOT FOUND"
+                tmp_lookup_status = "NOT FOUND in Repo"
 
+        # if company_name has cisco tag it
+        if domain == 'cisco.com':
+            # internal_attendees += 1
+            tmp_lookup_status = 'DO NOT LOOK UP - Cisco INTERNAL'
 
-
+        # if domain_name has gmail.com, yahoo.com, outlook.com tag it
+        if domain.lower() == 'gmail.com' \
+                or domain.lower() == 'yahoo.com' \
+                or domain.lower() == 'outlook.com':
+            # non_corp_email_attendee += 1
+            tmp_lookup_status = 'DO NOT LOOK UP - Non Corporate Email'
 
         # Add a new row to the output for Power Automate
         data = {'domain': domain,
@@ -235,7 +224,7 @@ def build_atd_lookup_table():
                 'emails': tmp_emails}
         df_atd_lookups = df_atd_lookups.append(data, ignore_index=True)
 
-    df_atd_lookups.to_excel(os.path.join(my_sheet_dir, 'atd_lookups.xlsx'), index=False)
+    df_atd_lookups.to_excel(os.path.join(my_sheet_dir, app_cfg['ATD_LOOKUP_TABLE']), index=False)
 
     return
 
@@ -251,38 +240,117 @@ def merge_atd_repo():
     print('ATD Repo Directory:', atd_repo)
 
     #
-    # Gather existing ATD customer names and file paths
+    # Create a dict of {file: [search_term, domain] to ADD to the ATD lookup files sheets in repo
     #
     ATD_files = os.listdir(atd_repo)
-    found_customers = []
-    ATD_file_pathnames = []
-
+    ATD_filename_dict = {}
     for file in ATD_files:
-        if file[:8] == "ATDData_":
-            ATD_dir_path = os.path.join(atd_repo, file)
-            ATD_file_pathnames.append(ATD_dir_path)
-            found_customers.append(file[8:-4])
+        if file[:9] == "ATDData__":
+            # Extract the search_term and domain from the filename
+            tmp_list = file[9:-6].split('__')
+            search_term = tmp_list[0]
+            domain = tmp_list[1].replace('#', '.')
+            ATD_filename_dict[file] = [search_term,domain]
+
+    #
+    # Add two columns to each sheet with the domain and search term used in ATD lookups
+    #
+    for file in ATD_files:
+        ATD_file_path = os.path.join(atd_repo, file)
+        search_term = ATD_filename_dict[file][0]
+        domain = ATD_filename_dict[file][1]
+        df_tmp = pd.read_csv(ATD_file_path)
+        # See if this file already has the added columns  ?
+        if 'search_term' in df_tmp:
+            print('Already Updated: ', ATD_file_path)
+            continue
+        else:
+            print('Updating: ', ATD_file_path)
+            df_tmp.insert(0,'search_term', search_term)
+            df_tmp.insert(0,'domain', domain)
+            df_tmp.to_csv(ATD_file_path, index=False)
 
     #
     # Create a dataframe template for merging all ATD Sheets
     #
-    df_template = pd.read_csv(ATD_file_pathnames[0])
+
+    path_name = os.path.join(atd_repo, ATD_files[0])
+    df_template = pd.read_csv(path_name)
     df_master = df_template[0:0]
     df_master.to_excel(os.path.join(my_sheet_dir, app_cfg['ATD_RESULTS']), index=False)
 
-    df_list = []
-    for file in ATD_file_pathnames:
-        df = pd.read_csv(file)
+    print('Processing ', len(ATD_files), ' files in repo')
+    for file in ATD_files:
+        path_name = os.path.join(atd_repo, file)
+        df = pd.read_csv(path_name)
         df_master = pd.concat([df_master, df])
-        # print('Num of Rows', df_master['Customer'].count())
 
+    print('Raw number of Rows', df_master['Customer'].count(), ' processed')
+
+    # Print applymap to escape any unicode characters
+    print("Scanning for unicode characters")
+    df_master = df_master.applymap(lambda x: x.encode('unicode_escape').
+                               decode('utf-8') if isinstance(x, str) else x)
+
+    print("Writing results to ", app_cfg['ATD_RESULTS'] )
     df_master.to_excel(os.path.join(my_sheet_dir, app_cfg['ATD_RESULTS']), index=False)
     print()
     print('Total ATD Results', df_master['Customer'].count())
     return
 
 
+def rename_files():
+    #
+    # Get Directories and Paths to Files
+    #
+    # my_sheet_dir = os.path.join(app_cfg['HOME'], app_cfg['MOUNT_POINT'], app_cfg['MY_APP_DIR'],
+    #                             app_cfg['ATD_LOOKUPS_SUB_DIR'])
+    atd_repo = os.path.join(my_sheet_dir, app_cfg['ATD_REPO'])
+    print('Using Directory:', my_sheet_dir)
+    print('ATD Repo Directory:', atd_repo)
+
+    # Gather existing ATD filenames into dict of search_terms
+    atd_filenames = os.listdir(atd_repo)
+
+    tmp = os.path.join(my_sheet_dir, app_cfg['ATD_LOOKUP_TABLE'])
+    df_atd_lookups = pd.read_excel(tmp)
+
+    lookup_dict = {}
+    for index, value in df_atd_lookups.iterrows():
+        search_terms = ''
+        domain = value['domain']
+        if isinstance(value['sfdc_account_name'], str):
+            search_terms = value['sfdc_account_name'] + "::"
+
+        if isinstance(value['search_terms'], str):
+            search_terms = search_terms + value['search_terms']
+
+        search_terms = search_terms.split('::')
+        # print(search_terms)
+        lookup_dict[domain] = search_terms
+
+    domain = ''
+    for file in atd_filenames:
+        # Remove the leading and trailing info
+        found_by = file[8:-4]
+
+        # for k, v in lookup_dict.items():
+        #     if found_by in v:
+        #         domain = k
+
+        domain_reformatted = domain.replace('.', '#')
+        new_name = 'ATDData__' + found_by + '__' + domain_reformatted + '__.csv'
+        old_name = 'ATDData_' + found_by + '.csv'
+
+        new_path = os.path.join(atd_repo, new_name)
+        old_path = os.path.join(atd_repo, old_name)
+        print (old_path)
+        print('\t', new_path)
+        print()
+        # os.rename(old_path, new_path)
+
 if __name__ == "__main__":
     # analyze_registrations()  # Take Raw Registrations from CVent pages and create additional columns
-    build_atd_lookup_table()  # Take the output of analyze_registrations() and build a file to hand to Power Automate
-    # merge_atd_repo() # After we have gathered all the ATD lookups MERGE them into one master file
+    # build_atd_lookup_table()  # Take the output of analyze_registrations() and build a file to hand to Power Automate
+    merge_atd_repo() # After we have gathered all the ATD lookups MERGE them into one master file
+    # rename_files()

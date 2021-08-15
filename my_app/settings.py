@@ -36,10 +36,8 @@ app_cfg = dict(
     # Account Team Directories (ATD) and Files
     ATD_LOOKUPS_SUB_DIR='AccountTeamLookups',
     ATD_REPO='ATD_Files',
-    ATD_SEARCH_TERMS='ATD_Search_Terms.xlsx',
+    ATD_LOOKUP_TABLE='ATD_Lookup_Table.xlsx',
     ATD_RESULTS='ATD_Raw_Results.xlsx',
-
-
 
 
 
